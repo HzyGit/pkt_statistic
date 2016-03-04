@@ -12,6 +12,39 @@ const char *module_name="pkt_statistic";
 
 static struct proc_dir_entry *pkt_proc_dir=NULL;
 
+/// 报文类型定义
+enum pkt_type {
+	PKT_TYPE_HTTP=0,
+	PKT_TYPE_SSH,
+	PKT_TYPE_DNS,
+	PKT_TYPE_ICMP,
+	PKT_TYPE_HTTPS,
+	PKT_TYPE_COUNT,
+};
+
+const char *pkt_type_name[PKT_TYPE_COUNT]={
+	"http",
+	"ssh",
+	"dns",
+	"icmp",
+	"https",
+};
+
+/// 报文统计结构
+struct pkt_data {
+	unsigned long pkt_len;     ///< 报文长度
+	enum pkt_type type;   ///< 报文类型
+	size_t count;         ///< 报文个数
+	int dir;            ///< 报文长度
+};
+
+struct pkt_statistic {
+	spinlock_t lock;
+	unsigned long pkt_count;
+	unsigned long pkt_len;
+	struct pkt_data pkts[PKT_TYPE_COUNT];
+};
+
 /// @brief proc读函数
 ssize_t pkt_statistic_read(struct file *filp,char * __user buff,
 		size_t buflen,loff_t *offset){
