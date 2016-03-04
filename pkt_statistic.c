@@ -12,6 +12,8 @@ const char *module_name="pkt_statistic";
 
 static struct proc_dir_entry *pkt_proc_dir=NULL;
 
+/**************pkt_statistic 报文统计信息定义************/
+
 /// 报文类型定义
 enum pkt_type {
 	PKT_TYPE_HTTP=0,
@@ -22,29 +24,94 @@ enum pkt_type {
 	PKT_TYPE_COUNT,
 };
 
-const char *pkt_type_name[PKT_TYPE_COUNT]={
+enum {
+	PKT_DIR_IN=0,
+	PKT_DIR_OUT,
+	PKT_DIR_COUNT,
+};
+
+const char *pkt_type_name[PKT_TYPE_COUNT+1]={
 	"http",
 	"ssh",
 	"dns",
 	"icmp",
 	"https",
+	"error type",
 };
 
 /// 报文统计结构
 struct pkt_data {
 	unsigned long pkt_len;     ///< 报文长度
-	enum pkt_type type;   ///< 报文类型
-	size_t count;         ///< 报文个数
-	int dir;            ///< 报文长度
+	enum pkt_type pkt_type;   ///< 报文类型
+	unsigned long pkt_count;         ///< 报文个数
 };
 
 struct pkt_statistic {
 	spinlock_t lock;
-	unsigned long pkt_count;
-	unsigned long pkt_len;
-	struct pkt_data pkts[PKT_TYPE_COUNT];
-};
+	unsigned long pkt_count[PKT_DIR_COUNT];
+	unsigned long pkt_len[PKT_DIR_COUNT];
+	struct pkt_data pkt_stat_data[PKT_DIR_COUNT][PKT_TYPE_COUNT]; 
+} pkt_stat; 
 
+static const char * get_pkt_type_name(enum pkt_type type) {
+	if(type<0||type>=PKT_TYPE_COUNT)
+			return pkt_type_name[PKT_TYPE_COUNT];
+	return pkt_type_name[type];
+}
+
+static void __clean_pkt_statistic(struct pkt_statistic * pkt_stat) {
+	int i=0;
+	for(i=0;i<PKT_DIR_COUNT;++i){
+		pkt_stat->pkt_len[i]=0;
+		pkt_stat->pkt_count[i]=0;
+	}
+	memset(pkt_stat->pkt_stat_data,0,sizeof(pkt_stat->pkt_stat_data));
+}
+
+static void init_pkt_statistic(struct pkt_statistic * pkt_stat) {
+	spin_lock_init(&pkt_stat->lock);
+	__clean_pkt_statistic(pkt_stat);
+}
+
+static void clean_pkt_statistic(struct pkt_statistic * pkt_stat) {
+	spin_lock_bh(&pkt_stat->lock);
+	__clean_pkt_statistic(pkt_stat);
+	spin_unlock_bh(&pkt_stat->lock);
+}
+
+
+static int __add_pkt_stat_data(struct pkt_statistic * pkt_stat,
+		unsigned long pkt_len,
+		enum pkt_type type,
+		int dir) {
+
+	struct pkt_data *pkt_stat_data;
+
+	if(type<0||type>=PKT_TYPE_COUNT)
+		return -EINVAL;
+	if(dir<0||dir>=PKT_DIR_COUNT)
+		return -EINVAL;
+	pkt_stat->pkt_len[dir]=pkt_stat->pkt_len[dir]*pkt_stat->pkt_count[dir]+pkt_len;
+	pkt_stat->pkt_count[dir]++;
+	pkt_stat->pkt_len[dir]/=pkt_stat->pkt_count[dir];
+	pkt_stat_data=&(pkt_stat->pkt_stat_data[dir][type]);
+	pkt_stat_data->pkt_len=pkt_stat_data->pkt_len*pkt_stat_data->pkt_count+pkt_len;
+	pkt_stat_data->pkt_len/=++pkt_stat_data->pkt_count;
+	pkt_stat_data->pkt_type=type;
+}
+
+static int add_pkt_stat_data(struct pkt_statistic *pkt_stat,
+		unsigned long pkt_len,
+		enum pkt_type type,
+		int dir) {
+	int ret=0;
+	spin_lock_bh(&pkt_stat->lock);
+	ret=__add_pkt_stat_data(pkt_stat,pkt_len,type,dir);
+	spin_unlock_bh(&pkt_stat->lock);
+	return ret;
+}
+
+/*******************proc 读写实现****************/
 /// @brief proc读函数
 ssize_t pkt_statistic_read(struct file *filp,char * __user buff,
 		size_t buflen,loff_t *offset){
